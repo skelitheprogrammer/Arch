@@ -1,11 +1,8 @@
 using System.Diagnostics.Contracts;
 using System.Threading;
-using Arch.Core.Extensions;
-using Arch.Core.Extensions.Internal;
 using Arch.Core.Utils;
 using Collections.Pooled;
 using Schedulers;
-using Component = Arch.Core.Utils.Component;
 
 namespace Arch.Core;
 
