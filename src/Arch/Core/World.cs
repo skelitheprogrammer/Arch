@@ -143,6 +143,7 @@ public partial class World
         world.GroupToArchetype.Dispose();
         world.RecycledIds.Dispose();
         world.QueryCache.Dispose();
+        world.EntityDescriptorCache.Clear();
 
         // Set archetypes to null to free them manually since Archetypes are set to ClearMode.Never to fix #65
         for (var index = 0; index < world.Archetypes.Count; index++)
