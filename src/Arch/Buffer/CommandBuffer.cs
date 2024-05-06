@@ -274,9 +274,9 @@ public sealed partial class CommandBuffer : IDisposable
     ///     This operation should only happen on the main thread.
     /// </remarks>
     /// <param name="world">The <see cref="World"/> where the commands will be playbacked too.</param>
-    /// <param name="dispose">If true it will clear the recorded operations after they were playbacked, if not they will stay.</param>
+    /// <param name="reset">If true it will clear the recorded operations after they were playbacked, if not they will stay.</param>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public void Playback(World world, bool dispose = true)
+    public void Playback(World world, bool reset = true)
     {
         // Create recorded entities.
         foreach (var cmd in Creates)
@@ -394,10 +394,15 @@ public sealed partial class CommandBuffer : IDisposable
         }
 
         // Reset values.
-        if (!dispose)
+        if (reset)
         {
-            return;
+            Reset();
         }
+
+    }
+
+    private void Reset()
+    {
 
         Size = 0;
         Entities.Clear();
@@ -416,15 +421,7 @@ public sealed partial class CommandBuffer : IDisposable
     /// </summary>
     public void Dispose()
     {
-        Entities.Dispose();
-        BufferedEntityInfo.Dispose();
-        Creates.Clear();
-        Sets.Clear();
-        Adds.Clear();
-        Removes.Clear();
-        Destroys.Dispose();
-        _addTypes.Dispose();
-        _removeTypes.Dispose();
+        Reset();
         GC.SuppressFinalize(this);
     }
 }
