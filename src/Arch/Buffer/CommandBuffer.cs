@@ -7,27 +7,6 @@ using Collections.Pooled;
 namespace Arch.Buffer;
 
 /// <summary>
-///     The <see cref="CreateCommand"/> struct
-///     contains data for creating a new <see cref="Entity"/>.
-/// </summary>
-public readonly record struct CreateCommand
-{
-    public readonly int Index;
-    public readonly ComponentType[] Types;
-
-    /// <summary>
-    ///     Initializes a new instance of the <see cref="CreateCommand"/> struct.
-    /// </summary>
-    /// <param name="index">The <see cref="Entity"/>'s buffer id.</param>
-    /// <param name="types">Its <see cref="ComponentType"/>'s array.</param>
-    public CreateCommand(int index, ComponentType[] types)
-    {
-        Index = index;
-        Types = types;
-    }
-}
-
-/// <summary>
 ///     The <see cref="BufferedEntityInfo"/> struct
 ///     contains data about a buffered <see cref="Entity"/>.
 /// </summary>
@@ -42,7 +21,7 @@ public readonly record struct BufferedEntityInfo
     public readonly int RemoveIndex;
 
     /// <summary>
-    ///      Initializes a new instance of the <see cref="CreateCommand"/> struct.
+    ///      Initializes a new instance of the <see cref="CommandBuffer.CreateCommand"/> struct.
     /// </summary>
     /// <param name="index">Its <see cref="CommandBuffer"/> index.</param>
     /// <param name="setIndex">Its <see cref="CommandBuffer.Sets"/> index.</param>
@@ -57,106 +36,106 @@ public readonly record struct BufferedEntityInfo
     }
 }
 
-/// <summary>
-///     The <see cref="CommandBuffer"/> class
-///     stores operation to <see cref="Entity"/>'s between to play and implement them at a later time in the <see cref="World"/>.
-/// </summary>
-public sealed partial class CommandBuffer : IDisposable
+public readonly struct EntityConfiguration : IEntityConfiguration
 {
+    private readonly CommandBuffer _buffer;
+    private readonly BufferedEntityInfo _info;
+
+    public Entity Entity => _buffer.Entities[_info.Index];
+
+    public EntityConfiguration(CommandBuffer buffer, BufferedEntityInfo info) : this()
+    {
+        _buffer = buffer;
+        _info = info;
+    }
+
+    public IEntityConfiguration Add<T>(in T? component = default)
+    {
+        Entity entity = _buffer.Entities[_info.Index];
+
+        _buffer.Add(entity, component);
+
+        return this;
+    }
+
+    public IEntityConfiguration Set<T>(in T? component = default)
+    {
+        Entity entity = _buffer.Entities[_info.Index];
+
+        _buffer.Set(entity, component);
+        return this;
+    }
+}
+public interface ICreateEntityCommand
+{
+    IEntityConfiguration Create(ComponentType[] componentTypes);
+}
+
+public interface IEntityConfiguration
+{
+    Entity Entity { get; }
+    IEntityConfiguration Set<T>(in T? component = default);
+    IEntityConfiguration Add<T>(in T? component = default);
+
+}
+
+public interface IDestroyEntityCommand : IPlayBackCommand
+{
+    IDestroyEntityCommand Destroy(in Entity entity);
+}
+
+public interface ISetComponentEntityCommand : IPlayBackCommand, IAddComponentEntityCommand
+{
+    ISetComponentEntityCommand Set<T>(in Entity entity, in T? component = default);
+}
+
+public interface IAddComponentEntityCommand : IPlayBackCommand
+{
+    IAddComponentEntityCommand Add<T>(in Entity entity, in T? component = default);
+}
+
+public interface IRemoveComponentEntityCommand : IPlayBackCommand
+{
+    IRemoveComponentEntityCommand Remove<T>(in Entity entity);
+}
+
+public interface IPlayBackCommand
+{
+    void Playback(World world, bool reset = true);
+}
+
+public sealed partial class CommandBuffer :
+    ICreateEntityCommand,
+    IDestroyEntityCommand,
+    ISetComponentEntityCommand,
+    IAddComponentEntityCommand,
+    IRemoveComponentEntityCommand,
+    IPlayBackCommand,
+    IDisposable
+{
+
     private readonly PooledList<ComponentType> _addTypes;
     private readonly PooledList<ComponentType> _removeTypes;
 
     /// <summary>
-    ///     Initializes a new instance of the <see cref="CommandBuffer"/> class
-    ///     with the specified <see cref="Core.World"/> and an optional <paramref name="initialCapacity"/> (default: 128).
+    ///     The <see cref="CreateCommand"/> struct
+    ///     contains data for creating a new <see cref="Entity"/>.
     /// </summary>
-    /// <param name="initialCapacity">The initial capacity.</param>
-    public CommandBuffer(int initialCapacity = 128)
+    internal readonly record struct CreateCommand
     {
-        Entities = new PooledList<Entity>(initialCapacity);
-        BufferedEntityInfo = new PooledDictionary<int, BufferedEntityInfo>(initialCapacity);
-        Creates = new PooledList<CreateCommand>(initialCapacity);
-        Sets = new SparseSet(initialCapacity);
-        Adds = new StructuralSparseSet(initialCapacity);
-        Removes = new StructuralSparseSet(initialCapacity);
-        Destroys = new PooledList<int>(initialCapacity);
-        _addTypes = new PooledList<ComponentType>(16);
-        _removeTypes = new PooledList<ComponentType>(16);
-    }
+        public readonly int Index;
+        public readonly ComponentType[] Types;
 
-    /// <summary>
-    ///     Gets the amount of <see cref="Entity"/> instances targeted by this <see cref="CommandBuffer"/>.
-    /// </summary>
-    public int Size { get; private set; }
-
-    /// <summary>
-    ///     All <see cref="Entity"/>'s created or modified in this <see cref="CommandBuffer"/>.
-    /// </summary>
-    internal PooledList<Entity> Entities { get; set; }
-
-    /// <summary>
-    ///     A map that stores some additional information for each <see cref="Entity"/>, which is needed for the internal <see cref="CommandBuffer"/> operations.
-    /// </summary>
-    internal PooledDictionary<int, BufferedEntityInfo> BufferedEntityInfo { get; set; }
-
-    /// <summary>
-    ///     All create commands recorded in this <see cref="CommandBuffer"/>. Used to create <see cref="Entity"/>'s during <see cref="Playback"/>.
-    /// </summary>
-    internal PooledList<CreateCommand> Creates { get; set; }
-
-    /// <summary>
-    ///     Saves set operations for components to play them back later during <see cref="Playback"/>.
-    /// </summary>
-    internal SparseSet Sets { get; set; }
-
-    /// <summary>
-    ///     Saves add operations for components to play them back later during <see cref="Playback"/>.
-    /// </summary>
-    internal StructuralSparseSet Adds { get; set; }
-
-    /// <summary>
-    ///     Saves remove operations for components to play them back later during <see cref="Playback"/>.
-    /// </summary>
-    internal StructuralSparseSet Removes { get; set; }
-
-    /// <summary>
-    ///     Saves remove operations for <see cref="Entity"/>'s to play them back later during <see cref="Playback"/>.
-    /// </summary>
-    internal PooledList<int> Destroys { get; set; }
-
-    /// <summary>
-    ///     Registers a new <see cref="Entity"/> into the <see cref="CommandBuffer"/>.
-    ///     An <see langword="out"/> parameter contains its <see cref="Arch.Buffer.BufferedEntityInfo"/>.
-    /// </summary>
-    /// <param name="entity">The <see cref="Entity"/> to register.</param>
-    /// <param name="info">Its <see cref="BufferedEntityInfo"/> which stores indexes used for <see cref="CommandBuffer"/> operations.</param>
-    [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    internal void Register(in Entity entity, out BufferedEntityInfo info)
-    {
-        var setIndex = Sets.Create(in entity);
-        var addIndex = Adds.Create(in entity);
-        var removeIndex = Removes.Create(in entity);
-
-        info = new BufferedEntityInfo(Size, setIndex, addIndex, removeIndex);
-
-        Entities.Add(entity);
-        BufferedEntityInfo.Add(entity.Id, info);
-        Size++;
-    }
-
-    /// TODO : Probably just run this if the wrapped entity is negative? To save some overhead?
-    /// <summary>
-    ///     Resolves an <see cref="Entity"/> originally either from a <see cref="StructuralSparseArray"/> or <see cref="SparseArray"/> to its real <see cref="Entity"/>.
-    ///     This is required since we can also create new entities via this buffer and buffer operations for it. So sometimes there negative entities stored in the arrays and those must then be resolved to its newly created real entity.
-    ///     <remarks>Probably hard to understand, blame genaray for this.</remarks>
-    /// </summary>
-    /// <param name="entity">The <see cref="Entity"/> with a negative or positive id to resolve.</param>
-    /// <returns>Its real <see cref="Entity"/>.</returns>
-    [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    internal Entity Resolve(Entity entity)
-    {
-        var entityIndex = BufferedEntityInfo[entity.Id].Index;
-        return Entities[entityIndex];
+        /// <summary>
+        ///     Initializes a new instance of the <see cref="CreateCommand"/> struct.
+        /// </summary>
+        /// <param name="index">The <see cref="Entity"/>'s buffer id.</param>
+        /// <param name="types">Its <see cref="ComponentType"/>'s array.</param>
+        public CreateCommand(int index, ComponentType[] types)
+        {
+            Index = index;
+            Types = types;
+        }
     }
 
     /// <summary>
@@ -166,17 +145,17 @@ public sealed partial class CommandBuffer : IDisposable
     /// <param name="types">The <see cref="Entity"/>'s component structure/<see cref="Archetype"/>.</param>
     /// <returns>The buffered <see cref="Entity"/> with an index of <c>-1</c>.</returns>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public Entity Create(ComponentType[] types)
+    public IEntityConfiguration Create(ComponentType[] types)
     {
         lock (this)
         {
             var entity = new Entity(-(Size + 1), -1);
-            Register(entity, out _);
+            Register(entity, out var info);
 
             var command = new CreateCommand(Size - 1, types);
             Creates.Add(command);
 
-            return entity;
+            return new EntityConfiguration(this, info);
         }
     }
 
@@ -186,7 +165,7 @@ public sealed partial class CommandBuffer : IDisposable
     /// </summary>
     /// <param name="entity">The <see cref="Entity"/> to destroy.</param>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public void Destroy(in Entity entity)
+    public IDestroyEntityCommand Destroy(in Entity entity)
     {
         lock (this)
         {
@@ -197,6 +176,8 @@ public sealed partial class CommandBuffer : IDisposable
 
             Destroys.Add(info.Index);
         }
+
+        return this;
     }
 
     /// <summary>
@@ -208,7 +189,7 @@ public sealed partial class CommandBuffer : IDisposable
     /// <param name="entity">The <see cref="Entity"/>.</param>
     /// <param name="component">The component value.</param>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public void Set<T>(in Entity entity, in T? component = default)
+    public ISetComponentEntityCommand Set<T>(in Entity entity, in T? component = default)
     {
         BufferedEntityInfo info;
         lock (this)
@@ -220,6 +201,8 @@ public sealed partial class CommandBuffer : IDisposable
         }
 
         Sets.Set(info.SetIndex, in component);
+
+        return this;
     }
 
     /// <summary>
@@ -231,7 +214,7 @@ public sealed partial class CommandBuffer : IDisposable
     /// <param name="entity">The <see cref="Entity"/>.</param>
     /// <param name="component">The component value.</param>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public void Add<T>(in Entity entity, in T? component = default)
+    public IAddComponentEntityCommand Add<T>(in Entity entity, in T? component = default)
     {
         BufferedEntityInfo info;
         lock (this)
@@ -244,6 +227,8 @@ public sealed partial class CommandBuffer : IDisposable
 
         Adds.Set<T>(info.AddIndex);
         Sets.Set(info.SetIndex, in component);
+
+        return this;
     }
 
     /// <summary>
@@ -253,7 +238,7 @@ public sealed partial class CommandBuffer : IDisposable
     /// <typeparam name="T">The component type.</typeparam>
     /// <param name="entity">The <see cref="Entity"/>.</param>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public void Remove<T>(in Entity entity)
+    public IRemoveComponentEntityCommand Remove<T>(in Entity entity)
     {
         BufferedEntityInfo info;
         lock (this)
@@ -265,6 +250,7 @@ public sealed partial class CommandBuffer : IDisposable
         }
 
         Removes.Set<T>(info.RemoveIndex);
+        return this;
     }
 
     /// <summary>
@@ -398,8 +384,108 @@ public sealed partial class CommandBuffer : IDisposable
         {
             Reset();
         }
-
     }
+}
+
+/// <summary>
+///     The <see cref="CommandBuffer"/> class
+///     stores operation to <see cref="Entity"/>'s between to play and implement them at a later time in the <see cref="World"/>.
+/// </summary>
+public sealed partial class CommandBuffer
+{
+    /// <summary>
+    ///     Initializes a new instance of the <see cref="CommandBuffer"/> class
+    ///     with the specified <see cref="Core.World"/> and an optional <paramref name="initialCapacity"/> (default: 32).
+    /// </summary>
+    /// <param name="initialCapacity">The initial capacity.</param>
+    public CommandBuffer(int initialCapacity = 32)
+    {
+        Entities = new PooledList<Entity>(initialCapacity);
+        BufferedEntityInfo = new PooledDictionary<int, BufferedEntityInfo>(initialCapacity);
+        Creates = new PooledList<CreateCommand>(initialCapacity);
+        Sets = new SparseSet(initialCapacity);
+        Adds = new StructuralSparseSet(initialCapacity);
+        Removes = new StructuralSparseSet(initialCapacity);
+        Destroys = new PooledList<int>(initialCapacity);
+        _addTypes = new PooledList<ComponentType>(16);
+        _removeTypes = new PooledList<ComponentType>(16);
+    }
+
+    /// <summary>
+    ///     Gets the amount of <see cref="Entity"/> instances targeted by this <see cref="CommandBuffer"/>.
+    /// </summary>
+    public int Size { get; private set; }
+
+    /// <summary>
+    ///     All <see cref="Entity"/>'s created or modified in this <see cref="CommandBuffer"/>.
+    /// </summary>
+    internal PooledList<Entity> Entities { get; set; }
+
+    /// <summary>
+    ///     A map that stores some additional information for each <see cref="Entity"/>, which is needed for the internal <see cref="CommandBuffer"/> operations.
+    /// </summary>
+    internal PooledDictionary<int, BufferedEntityInfo> BufferedEntityInfo { get; set; }
+
+    /// <summary>
+    ///     All create commands recorded in this <see cref="CommandBuffer"/>. Used to create <see cref="Entity"/>'s during <see cref="Playback"/>.
+    /// </summary>
+    internal PooledList<CreateCommand> Creates { get; set; }
+
+    /// <summary>
+    ///     Saves set operations for components to play them back later during <see cref="Playback"/>.
+    /// </summary>
+    internal SparseSet Sets { get; set; }
+
+    /// <summary>
+    ///     Saves add operations for components to play them back later during <see cref="Playback"/>.
+    /// </summary>
+    internal StructuralSparseSet Adds { get; set; }
+
+    /// <summary>
+    ///     Saves remove operations for components to play them back later during <see cref="Playback"/>.
+    /// </summary>
+    internal StructuralSparseSet Removes { get; set; }
+
+    /// <summary>
+    ///     Saves remove operations for <see cref="Entity"/>'s to play them back later during <see cref="Playback"/>.
+    /// </summary>
+    internal PooledList<int> Destroys { get; set; }
+
+    /// <summary>
+    ///     Registers a new <see cref="Entity"/> into the <see cref="CommandBuffer"/>.
+    ///     An <see langword="out"/> parameter contains its <see cref="Arch.Buffer.BufferedEntityInfo"/>.
+    /// </summary>
+    /// <param name="entity">The <see cref="Entity"/> to register.</param>
+    /// <param name="info">Its <see cref="BufferedEntityInfo"/> which stores indexes used for <see cref="CommandBuffer"/> operations.</param>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    internal void Register(in Entity entity, out BufferedEntityInfo info)
+    {
+        var setIndex = Sets.Create(in entity);
+        var addIndex = Adds.Create(in entity);
+        var removeIndex = Removes.Create(in entity);
+
+        info = new BufferedEntityInfo(Size, setIndex, addIndex, removeIndex);
+
+        Entities.Add(entity);
+        BufferedEntityInfo.Add(entity.Id, info);
+        Size++;
+    }
+
+    /// TODO : Probably just run this if the wrapped entity is negative? To save some overhead?
+    /// <summary>
+    ///     Resolves an <see cref="Entity"/> originally either from a <see cref="StructuralSparseArray"/> or <see cref="SparseArray"/> to its real <see cref="Entity"/>.
+    ///     This is required since we can also create new entities via this buffer and buffer operations for it. So sometimes there negative entities stored in the arrays and those must then be resolved to its newly created real entity.
+    ///     <remarks>Probably hard to understand, blame genaray for this.</remarks>
+    /// </summary>
+    /// <param name="entity">The <see cref="Entity"/> with a negative or positive id to resolve.</param>
+    /// <returns>Its real <see cref="Entity"/>.</returns>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    internal Entity Resolve(Entity entity)
+    {
+        var entityIndex = BufferedEntityInfo[entity.Id].Index;
+        return Entities[entityIndex];
+    }
+
 
     private void Reset()
     {
